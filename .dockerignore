@@ -1,0 +1,8 @@
+.git
+target
+# The Lean project's build output is produced INSIDE the image from the pinned
+# manifest. Copying a host build would ship darwin oleans into an amd64 image.
+lean/.lake
+lean/build
+.env
+logs

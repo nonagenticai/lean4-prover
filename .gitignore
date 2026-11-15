@@ -1,0 +1,75 @@
+# ==============================================================================
+# Lean4 Prover - Git Ignore
+# ==============================================================================
+
+# Environment variables (CRITICAL - contains secrets)
+.env
+.env.*
+!.env.example
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.hypothesis/
+cover/
+nosetests.xml
+coverage.xml
+
+# Environments
+venv/
+.venv
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Application specific
+data/
+logs/
+
+# UV
+.uv/
+
+# Ruff
+.ruff_cache/
+
+# Lean 4
+lean/.lake/
+lean/lake-packages/
+lean/build/
+
+# CI artifacts
+.local-ci-commit.txt
+.local-ci-push.txt
+01_recent_push_failure.txt
+02_deploy_issues.txt
