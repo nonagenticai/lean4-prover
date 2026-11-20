@@ -31,7 +31,7 @@ ARG BASE_REGISTRY=docker.io
 # -----------------------------
 # Stage 1 — the Rust service
 # -----------------------------
-FROM ${BASE_REGISTRY}/library/rust:1.98-bookworm AS rust-build
+FROM ${BASE_REGISTRY}/library/rust:1.100.0-trixie AS rust-build
 
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
@@ -44,7 +44,7 @@ RUN cargo build --release --locked \
 # -----------------------------
 # Stage 2 — Lean toolchain + Mathlib
 # -----------------------------
-FROM ${BASE_REGISTRY}/library/debian:12-slim AS lean-build
+FROM ${BASE_REGISTRY}/library/debian:13-slim AS lean-build
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -88,7 +88,7 @@ RUN lake exe cache get \
 # -----------------------------
 # Stage 3 — runtime
 # -----------------------------
-FROM ${BASE_REGISTRY}/library/debian:12-slim AS production
+FROM ${BASE_REGISTRY}/library/debian:13-slim AS production
 
 ENV ELAN_HOME=/opt/elan \
     PATH="/opt/elan/bin:/usr/local/bin:/usr/bin:/bin" \
