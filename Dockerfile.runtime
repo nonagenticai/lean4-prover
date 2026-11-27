@@ -11,7 +11,7 @@
 # ⚠️ The digest is authoritative. Same repository as the app image on purpose: the base
 # layers already exist in ghcr.io/nonagenticai/lean4-prover, so pushing the app image does
 # not re-upload 10.6 GB.
-ARG LEAN_BASE_IMAGE=ghcr.io/nonagenticai/lean4-prover:base-lean-PLACEHOLDER@sha256:0000000000000000000000000000000000000000000000000000000000000000
+ARG LEAN_BASE_IMAGE=ghcr.io/nonagenticai/lean4-prover:base-lean-11e2add5663d@sha256:db6b57ad80b1b1ecdba84ced166a5a616f617934579d9b0e07caa7b944a851fa
 FROM ${LEAN_BASE_IMAGE}
 
 ARG SOURCE_REVISION=unknown
@@ -20,4 +20,8 @@ LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
 
 COPY --chown=1000:1000 artifact/lean4-prover /usr/local/bin/lean4-prover
 
+# Clear the base's `CMD ["bash"]`: without this the container would start the binary as
+# `/usr/local/bin/lean4-prover bash`. The binary ignores argv today, but an argument it
+# starts reading tomorrow would be this stray `bash`.
+CMD []
 ENTRYPOINT ["/usr/local/bin/lean4-prover"]
