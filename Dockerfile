@@ -86,9 +86,17 @@ RUN lake exe cache get \
 
 
 # -----------------------------
-# Stage 3 — runtime
+# Stage 3 — lean base (elan + the pinned Lean toolchain + Mathlib), no app binary
 # -----------------------------
-FROM ${BASE_REGISTRY}/library/debian:13-slim AS production
+#
+# ⚠️ THIS STAGE IS PUBLISHED AND PINNED BY DIGEST. It takes ~25 GB of disk to build
+# (the two copied trees coexist with the builder stage), so it is NOT built per
+# merge and NOT built on the 14 GB GitHub-hosted runner. It is built rarely, on a
+# disk-rich host, by scripts/publish-lean-base.sh, and the per-merge image is
+# Dockerfile.runtime FROM the published digest. Editing this stage or the
+# `lean-build` stage REQUIRES republishing the base; CI only guards the `lean/`
+# pins, not stage text.
+FROM ${BASE_REGISTRY}/library/debian:13-slim AS lean-base
 
 ENV ELAN_HOME=/opt/elan \
     PATH="/opt/elan/bin:/usr/local/bin:/usr/bin:/bin" \
@@ -108,7 +116,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # nothing. `--chown` is applied while the layers are extracted.
 COPY --from=lean-build --chown=1000:1000 /opt/elan /opt/elan
 COPY --from=lean-build --chown=1000:1000 /lean-project /lean-project
-COPY --from=rust-build /out/lean4-prover /usr/local/bin/lean4-prover
 
 # The `chmod -R a+rX /opt/elan` that used to live here is gone with it: every
 # file arrives 0644/0755 from the builder, which is already world-readable and
@@ -128,5 +135,12 @@ USER 1000:1000
 EXPOSE 8812
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD ["curl", "-f", "http://localhost:8812/health"]
+
+# -----------------------------
+# Stage 4 — full local build (outsiders): base + the binary compiled above
+# -----------------------------
+FROM lean-base AS production
+
+COPY --from=rust-build /out/lean4-prover /usr/local/bin/lean4-prover
 
 ENTRYPOINT ["/usr/local/bin/lean4-prover"]

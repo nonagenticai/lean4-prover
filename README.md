@@ -83,6 +83,27 @@ The build reaches GitHub (elan) and the Mathlib cache, and the resulting image i
 about 10.6 GB; budget roughly 25 GB of disk for the build. `BASE_REGISTRY` defaults
 to `docker.io`, so no registry setup is required.
 
+### Publishing (maintainers)
+
+CI publishes every merge to `ghcr.io/nonagenticai/lean4-prover`: `sha-<7>` and
+`main-<run>` on push, and `latest` only after a runtime smoke that makes a real Mathlib
+request. Deployment is Flux reflecting `latest`'s digest, so no hand build and no hand
+push is part of a release.
+
+The per-merge image is `Dockerfile.runtime`: the CI-built binary on top of a published
+**lean base** (elan + the pinned toolchain + Mathlib), pinned by digest in that file.
+The base is the only heavy build. Publish it rarely, from a host with ≥ 40 GB free:
+
+```bash
+GHCR_TOKEN=… GHCR_USER=… ./scripts/publish-lean-base.sh
+# put the printed ARG into Dockerfile.runtime, make the package public if it is not,
+# and commit
+```
+
+Republish it when `lean/lean-toolchain` or `lean/lake-manifest.json` changes — CI refuses
+to build against a base whose tag does not match those pins — and whenever the
+`lean-build` / `lean-base` stages of the `Dockerfile` change (CI cannot see that one).
+
 To run against a lake project you already have, build the binary with `cargo build
 --release --locked` and point `LEAN4_PROVER_LEAN_BINARY`, `LEAN4_PROVER_LAKE_BINARY`,
 `LEAN4_PROVER_ELAN_HOME` and `LEAN4_PROVER_PROJECT_DIR` at it.

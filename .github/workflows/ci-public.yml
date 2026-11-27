@@ -132,54 +132,178 @@ jobs:
           tar -xzf "$RUNNER_TEMP/audit.tgz" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/cargo-audit-x86_64-unknown-linux-musl-v0.22.2/cargo-audit" audit
 
-  # Build the container on every run, so a Dockerfile that stopped compiling fails
-  # here rather than at release.
-  #
-  # ⚠️ WHY THE SERVICE STAGE, NOT THE FULL IMAGE. The final image carries elan, the
-  #   pinned Lean toolchain and Mathlib's packages: about 10.6 GB, and together with
-  #   the builder stage and the copy layers the build peaks near 25 GB of disk. A
-  #   GitHub-hosted runner has 14 GB, so the full build cannot complete here — it is
-  #   built on a host with the disk for it (`docker build -f Dockerfile .`, see the
-  #   README). What this job does prove is the part this repository's own code
-  #   occupies, compiled against the default `BASE_REGISTRY` (`docker.io`) that an
-  #   outside contributor gets, and that the resulting binary starts and serves.
-  #   Consequently nothing here pushes an image: the runtime image does not exist in
-  #   this workflow.
-  image:
+
+  # The per-merge image (Dockerfile.runtime): the PUBLISHED lean base + the binary built
+  # above. The base carries elan, the pinned Lean toolchain and Mathlib (~10.6 GB) and
+  # takes ~25 GB to build, so it is never built here — it is published rarely by
+  # scripts/publish-lean-base.sh and pinned by digest. Each job below stays inside the
+  # runner's ~14 GB by never holding the image twice: `cacheonly` on PRs, `--push` on
+  # main, a separate pull+smoke job, and an instant tag move for `latest`.
+  binary:
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
     env:
-      # A variable, not a literal: a bare `name:tag` on a docker line reads as a Docker Hub ref.
-      IMG: app:ci
+      # The Dockerfile's rust-build stage pin; the shipped binary is built with the same
+      # toolchain rather than whatever `stable` the runner happens to carry.
+      RUSTUP_TOOLCHAIN: "1.100.0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
 
-      - name: build the service stage (BASE_REGISTRY defaults to docker.io)
-        run: docker build --target rust-build --file Dockerfile --tag "$IMG" .
+      - name: rust toolchain
+        run: |
+          set -euo pipefail
+          rustup show
+          rustc --version
 
-      # ⛔ NO PIPE on this check. `grep -q` exits at its first match, so whoever is
-      # writing the response dies on SIGPIPE and the step goes red on a body it
-      # produced. A bash pattern match on the captured variable has no reader to
-      # exit early.
-      #
-      # The licence gate defaults to ON and refuses to boot with no introspection
-      # URL, so the standalone run sets ENABLE_AUTH=false — the same configuration
-      # the README documents.
-      - name: smoke
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: cargo build --release
+        run: cargo build --release --locked
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lean4-prover-binary
+          path: target/release/lean4-prover
+          if-no-files-found: error
+
+  image:
+    needs: binary
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/nonagenticai/lean4-prover
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: lean4-prover-binary
+          path: artifact
+
+      # The base tag is a pure function of the two Lean pins. A `lean/` change without a
+      # base republish is caught here, with the fix named, instead of silently shipping
+      # the old Mathlib.
+      - name: resolve the pinned lean base and guard the pins
+        id: base
+        run: |
+          set -euo pipefail
+          pinned="$(sed -n 's/^ARG LEAN_BASE_IMAGE=//p' Dockerfile.runtime)"
+          [ -n "$pinned" ] || { echo "Dockerfile.runtime has no ARG LEAN_BASE_IMAGE" >&2; exit 1; }
+          if command -v sha256sum >/dev/null 2>&1; then
+            digest="$(cat lean/lean-toolchain lean/lake-manifest.json | sha256sum | cut -d' ' -f1)"
+          else
+            digest="$(cat lean/lean-toolchain lean/lake-manifest.json | shasum -a 256 | cut -d' ' -f1)"
+          fi
+          pins8="${digest:0:12}"
+          case "$pinned" in
+            *":base-lean-$pins8@"*) : ;;
+            *)
+              echo "lean pins changed: this tree needs base-lean-$pins8, but Dockerfile.runtime pins" >&2
+              echo "  $pinned" >&2
+              echo "Republish the base with scripts/publish-lean-base.sh and commit the ref it prints." >&2
+              exit 1
+              ;;
+          esac
+          echo "base=$pinned" >> "$GITHUB_OUTPUT"
+          echo "pins=$pins8" >> "$GITHUB_OUTPUT"
+
+      - name: runner disk
+        run: df -h /
+
+      - name: login to ghcr (push only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build the runtime image (validate on PR, push on main)
+        run: |
+          set -euo pipefail
+          args=(--file Dockerfile.runtime
+                --build-arg "LEAN_BASE_IMAGE=${{ steps.base.outputs.base }}"
+                --build-arg "SOURCE_REVISION=$GITHUB_SHA")
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            docker buildx build "${args[@]}" --push \
+              --tag "$IMAGE:sha-${GITHUB_SHA:0:7}" \
+              --tag "$IMAGE:main-$GITHUB_RUN_NUMBER" .
+          else
+            docker buildx build "${args[@]}" --output type=cacheonly .
+          fi
+
+  # The runtime image is only proven where it can be held once: pull the just-pushed tag,
+  # run it, and make a real Lean request against the real Mathlib. The failing theorem is
+  # the #787 regression guard — a refusal must come back as diagnostics, not as [].
+  # `latest` moves ONLY here, after both requests pass, so Flux can never roll a build
+  # that never booted.
+  smoke:
+    needs: image
+    if: ${{ !github.event.repository.private && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/nonagenticai/lean4-prover
+    steps:
+      - name: login and pull the just-pushed image
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE:sha-${GITHUB_SHA:0:7}"
+          df -h /
+
+      # The licence gate defaults to ON and refuses to boot with no introspection URL,
+      # so the standalone run sets ENABLE_AUTH=false — the same configuration the README
+      # documents. ⛔ NO PIPE on these checks: `grep -q` exits at its first match and the
+      # writer dies on SIGPIPE; a bash pattern match on the captured body has no reader.
+      - name: run it and prove Lean + Mathlib
         run: |
           set -euo pipefail
           docker run -d --name smoke -e ENABLE_AUTH=false \
-            -p 127.0.0.1:18812:8812 --entrypoint /out/lean4-prover "$IMG"
+            -p 127.0.0.1:18812:8812 "$IMAGE:sha-${GITHUB_SHA:0:7}"
           ok=0
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:18812/health/live >/dev/null 2>&1; then ok=1; break; fi
             sleep 1
           done
-          body="$(curl -fsS http://127.0.0.1:18812/health/live || true)"
-          docker logs smoke || true
+          if [ "$ok" != 1 ]; then
+            docker logs smoke || true
+            echo "the service never answered /health/live" >&2
+            exit 1
+          fi
+          check() {
+            curl -fsS -X POST http://127.0.0.1:18812/api/check \
+              -H 'Content-Type: application/json' --data-binary "$1"
+          }
+          good="$(check '{"source":"import Mathlib.Tactic.NormNum\ntheorem t : 1 + 1 = 2 := by norm_num"}')"
+          bad="$(check '{"source":"import Mathlib.Tactic.NormNum\ntheorem nope : 1 = 2 := by norm_num"}')"
           docker rm -f smoke >/dev/null 2>&1 || true
-          [ "$ok" = 1 ] || { echo "the service never answered /health/live" >&2; exit 1; }
-          [[ "$body" == *'"alive"'* ]] || { echo "unexpected /health/live body: $body" >&2; exit 1; }
+          echo "positive: $good"
+          echo "negative: $bad"
+          [ "${good#*\"valid\":true}" != "$good" ] || { echo "expected valid:true" >&2; exit 1; }
+          [ "${bad#*\"valid\":false}" != "$bad" ] || { echo "expected valid:false" >&2; exit 1; }
+          [ "${bad#*\"diagnostics\":[]}" = "$bad" ] || { echo "a failing check returned diagnostics: [] — #787 regressed" >&2; exit 1; }
+
+      - name: promote latest (only after the smoke passed)
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:sha-${GITHUB_SHA:0:7}"
+          docker buildx imagetools inspect "$IMAGE:latest"
