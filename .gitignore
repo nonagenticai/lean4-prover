@@ -73,3 +73,6 @@ lean/build/
 .local-ci-push.txt
 01_recent_push_failure.txt
 02_deploy_issues.txt
+
+# cargo-guard shared target (local builds)
+target/claude/
