@@ -616,6 +616,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
  "tokio",
  "tower",
  "tower-http 0.7.1",

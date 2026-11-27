@@ -20,7 +20,10 @@ belongs back in this tree.
 | `src/auth.rs` | licence introspection, its three caches, the 401/503 answers |
 | `src/routes.rs` | health, `/metrics`, `/openapi.json`, the three compute routes |
 | `src/metrics.rs` | hand-rolled Prometheus exposition |
+| `src/contract.rs` | the captured OpenAPI lock and the route-set check |
+| `contract/` | the capture from the released deployment: OpenAPI lock, provenance, response goldens |
 | `tests/http_contract.rs` | end-to-end HTTP contract over a fake `lake`/`lean` |
+| `tests/parity.rs` | replay of every captured golden through the real router |
 | `lean/` | the lake project: `lean-toolchain`, `lakefile.lean`, `lake-manifest.json` |
 | `Dockerfile` | Rust build + elan/Mathlib stage + slim runtime |
 
@@ -44,6 +47,11 @@ belongs back in this tree.
   image tomorrow.
 - **`lake exe cache get` runs before `lake build`.** Mathlib publishes prebuilt
   oleans; without them the build compiles a large slice of the library from source.
+- **The lean base is a published, digest-pinned artifact.** CI ships `Dockerfile.runtime`
+  (the binary on top of `ghcr.io/nonagenticai/lean4-prover:base-lean-<pins8>@sha256:…`),
+  never the heavy stages. Any change to `lean/` needs `scripts/publish-lean-base.sh` first
+  (CI fails otherwise, naming it); any change to the `lean-build`/`lean-base` Dockerfile
+  stages needs it too, and CI cannot see that one.
 - **No package's `.git` may be deleted from the built project.** Lake resolves every
   package by running `git remote get-url origin` in its directory; with `.git`
   stripped it decides the URL changed, deletes the checkout and re-clones.
@@ -61,6 +69,8 @@ belongs back in this tree.
 - **Config changes go through `src/config.rs`**, and every new hardcoded path must
   carry a container-compatible default.
 - CI is `.github/workflows/ci-public.yml`, on GitHub-hosted `ubuntu-latest`:
-  secret scan, private-reference scan, the Rust checks and a container build.
+  secret scan, private-reference scan, the Rust checks, a pinned-toolchain binary build,
+  the thin runtime image (`Dockerfile.runtime`), and on `main` a runtime smoke plus the
+  ghcr push that Flux deploys.
 - `.github/workflows/` must never reference a private repository, a self-hosted
   runner or an internal registry — the repo is public.

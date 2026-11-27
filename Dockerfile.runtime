@@ -1,0 +1,27 @@
+# The per-merge image: the published lean base (elan + the pinned Lean toolchain + Mathlib)
+# plus a freshly built binary. This is the image CI publishes; it never builds the heavy
+# stages, so it fits a GitHub-hosted runner.
+#
+# LEAN_BASE_IMAGE is produced by scripts/publish-lean-base.sh, which prints the line below.
+# It is pinned by digest; its tag carries the sha256 of lean/lean-toolchain +
+# lean/lake-manifest.json, and CI recomputes that hash and refuses to build against a base
+# whose tag does not match. Changing either `lean/` file therefore requires republishing the
+# base — that is the one deliberately rare, scripted publish in this repository.
+#
+# ⚠️ The digest is authoritative. Same repository as the app image on purpose: the base
+# layers already exist in ghcr.io/nonagenticai/lean4-prover, so pushing the app image does
+# not re-upload 10.6 GB.
+ARG LEAN_BASE_IMAGE=ghcr.io/nonagenticai/lean4-prover:base-lean-11e2add5663d@sha256:db6b57ad80b1b1ecdba84ced166a5a616f617934579d9b0e07caa7b944a851fa
+FROM ${LEAN_BASE_IMAGE}
+
+ARG SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
+      org.opencontainers.image.source=https://github.com/nonagenticai/lean4-prover
+
+COPY --chown=1000:1000 artifact/lean4-prover /usr/local/bin/lean4-prover
+
+# Clear the base's `CMD ["bash"]`: without this the container would start the binary as
+# `/usr/local/bin/lean4-prover bash`. The binary ignores argv today, but an argument it
+# starts reading tomorrow would be this stray `bash`.
+CMD []
+ENTRYPOINT ["/usr/local/bin/lean4-prover"]
