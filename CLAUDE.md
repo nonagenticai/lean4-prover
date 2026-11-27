@@ -20,7 +20,10 @@ belongs back in this tree.
 | `src/auth.rs` | licence introspection, its three caches, the 401/503 answers |
 | `src/routes.rs` | health, `/metrics`, `/openapi.json`, the three compute routes |
 | `src/metrics.rs` | hand-rolled Prometheus exposition |
+| `src/contract.rs` | the captured OpenAPI lock and the route-set check |
+| `contract/` | the capture from the released deployment: OpenAPI lock, provenance, response goldens |
 | `tests/http_contract.rs` | end-to-end HTTP contract over a fake `lake`/`lean` |
+| `tests/parity.rs` | replay of every captured golden through the real router |
 | `lean/` | the lake project: `lean-toolchain`, `lakefile.lean`, `lake-manifest.json` |
 | `Dockerfile` | Rust build + elan/Mathlib stage + slim runtime |
 

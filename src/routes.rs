@@ -18,6 +18,19 @@ use crate::models::{
 };
 use crate::state::AppState;
 
+/// Every documented operation, as `"METHOD path"`. The contract test compares this set with
+/// the captured OpenAPI lock; keeping it beside the router is what makes a new route a test
+/// failure rather than a silent contract change.
+pub const ROUTES: &[(&str, &str)] = &[
+    ("GET", "/health"),
+    ("GET", "/health/live"),
+    ("GET", "/health/ready"),
+    ("GET", "/metrics"),
+    ("POST", "/api/check"),
+    ("POST", "/api/elaborate"),
+    ("POST", "/api/prove"),
+];
+
 pub fn router(state: AppState) -> axum::Router {
     let mut router = axum::Router::new()
         .route("/health", get(health))
@@ -30,7 +43,7 @@ pub fn router(state: AppState) -> axum::Router {
 
     if state.cfg.docs_enabled() {
         router = router
-            .route("/openapi.json", get(openapi))
+            .route("/openapi.json", get(openapi_handler))
             .route("/docs", get(docs));
     }
     router.with_state(state)
@@ -154,7 +167,13 @@ async fn docs() -> Response {
 /// A static document describing the three compute routes. The previous service
 /// generated this from FastAPI's route table; the contract callers and the
 /// docs page need is the path list plus the `LicenceToken` security scheme.
-async fn openapi() -> Json<serde_json::Value> {
+async fn openapi_handler() -> Json<serde_json::Value> {
+    Json(openapi())
+}
+
+/// The document itself, so the contract test compares it with the capture without
+/// starting a server.
+pub fn openapi() -> serde_json::Value {
     let protected = |summary: &str, request: &str, response: &str| {
         json!({
             "post": {
@@ -177,7 +196,7 @@ async fn openapi() -> Json<serde_json::Value> {
         })
     };
 
-    Json(json!({
+    json!({
         "openapi": "3.1.0",
         "info": {
             "title": "Lean4 Prover API",
@@ -261,5 +280,5 @@ async fn openapi() -> Json<serde_json::Value> {
                 }
             }
         }
-    }))
+    })
 }
