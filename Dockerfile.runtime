@@ -19,6 +19,11 @@ LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
       org.opencontainers.image.source=https://github.com/nonagenticai/lean4-prover
 
 COPY --chown=1000:1000 artifact/lean4-prover /usr/local/bin/lean4-prover
+# The binary arrives through an Actions artifact, and a v4 artifact does not preserve file
+# modes: measured on the first publish, the container failed at start with
+# `exec: "/usr/local/bin/lean4-prover": permission denied` (docker exit 126). Set it here so
+# the image is executable regardless of the transport.
+RUN chmod 0755 /usr/local/bin/lean4-prover
 
 # Clear the base's `CMD ["bash"]`: without this the container would start the binary as
 # `/usr/local/bin/lean4-prover bash`. The binary ignores argv today, but an argument it
